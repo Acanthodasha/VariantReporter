@@ -1,4 +1,4 @@
-# depends on pandas, numpy, MyGene, seaborn etc. packages
+## depends on pandas, numpy, MyGene, seaborn etc. packages
 import pandas as pd
 import numpy as np
 import gseapy as gp
@@ -768,7 +768,7 @@ def generate_variant_summary(
             impact_levels.append('MODERATE')
         elif i == 'h':
             impact_levels.append('HIGH')
-    print('impact levels: ', ', '.join(impact_levels))
+    print('impact levels: ')
     data = read_impact_data(path)
     data_subset = subset_byimpact(data, impact_levels)
     data_subset_with_genenames = add_genenames(data_subset)
@@ -940,7 +940,7 @@ def generate_variant_summary_without_lists(
             impact_levels.append('MODERATE')
         elif i == 'h':
             impact_levels.append('HIGH')
-    print('impact levels: ', ', '.join(impact_levels))
+    print('impact levels: ')
     data = read_impact_data(path)
     data_subset = subset_byimpact(data, impact_levels)
     data_subset_with_genenames = add_genenames(data_subset)
