@@ -1,4 +1,3 @@
-## depends on pandas, numpy, MyGene, seaborn etc. packages
 import pandas as pd
 import numpy as np
 import gseapy as gp
@@ -130,18 +129,32 @@ class NoOutputOptionSpecified(Exception):
 
 
 def get_go_annotations(genelist):
+    global annotations_all
     geneanno = {}
     for i in genelist:
-        anno = mg.getgene(i, fields='go')
-        if anno is None:
-            print('No annotation for the following gene is found:', i)
-            geneanno[i] = {'NaN'}
-        elif 'go' in anno:
-            geneanno[i] = anno['go']
+        anno = ''
+        if i in annotations_all:
+            geneanno[i] = annotations_all[i]
         else:
-            print('No annotation for the following gene is found:', i)
-            geneanno[i] = {'NaN'}
-    #    time.sleep(0.2) #добавлено сверх, чтобы не ругался сервер
+            while anno == '':
+                try:
+                    anno = mg.getgene(i, fields='go')
+                    break
+                except BaseException:
+                    print('Connection refused be the server...')
+                    print('ZZZZzzzz')
+                    time.sleep(5)
+                    print('I am awaken again!')
+                    continue
+            if anno is not None:
+                if 'go' in anno:
+                    geneanno[i] = anno['go']
+                    annotations_all[i] = anno['go']
+                else:
+                    print('No annotation for the following gene ise found:', i)
+                    geneanno[i] = {'NA'}
+            else:
+                geneanno[i] = {'NA'}
     return geneanno
 
 
@@ -208,6 +221,8 @@ then use:
     ggot = True
     wgl = True
     wgot = True
+    global annotations_all
+    annotations_all = {}
     if instruction[1] == '-a':
         go_get_genenames_all_impact_levels(instruction[0])
     else:
@@ -257,6 +272,8 @@ def get_go_annotations_RAW_init():
     ggot = True
     wgl = True
     wgot = True
+    global annotations_all
+    annotations_all = {}
     if instruction[1] == '-a':
         go_get_genenames_all_impact_levels(instruction[0])
     else:
@@ -670,6 +687,8 @@ def total_variant_summary_init():
     aligner = instruction[6].split(',')
     caller = instruction[7].split(',')
     pipelineID = instruction[8].split(',')
+    global annotations_all
+    annotations_all = {}
     resultant_df = generate_variant_summary(
         path=paths[0],
         impactlvl=impactlvl,
@@ -842,6 +861,8 @@ def total_variant_summary_init_without_lists():
     aligner = instruction[6].split(',')
     caller = instruction[7].split(',')
     pipelineID = instruction[8].split(',')
+    global annotations_all
+    annotations_all = {}
     resultant_df = generate_variant_summary_without_lists(
         path=paths[0],
         impactlvl=impactlvl,
@@ -999,10 +1020,263 @@ def generate_variant_summary_without_lists(
     return data_subset_with_target_genes
 
 
+# VERSION WITHOUT GENELIST BUT WITH ANNOTATIONS
+def total_variant_summary_notarget_init():
+    '''generates a table with summary for variants with the specified impact in the genes present in the
+    target_genes .txt file;
+    prepare the _impact.txt files with the command: cat your_vcf.vcf | perl vcfEffOnePerLine.pl | SnpSift extractFields - CHROM POS REF ALT "ANN[*].IMPACT" "ANN[*].GENE" "ANN[*].EFFECT" "LOF[*].GENE" "LOF[*].PERC" "NMD[*].GENE" "NMD[*].PERC"> output_impact.txt'''
+    instruction = input(
+        'input format: paths, impacts (-a, -b, -l, -m, -h, -lm etc.), FileIDs, sampleIDs, seq_platforms, aligners, callers, pipelineIDs: ')
+    instruction = instruction.split(' ')
+    paths = instruction[0].split(',')
+    impactlvl = instruction[1]
+    FileID = instruction[2].split(',')
+    sampleID = instruction[3].split(',')
+    platform = instruction[4].split(',')
+    aligner = instruction[5].split(',')
+    caller = instruction[6].split(',')
+    pipelineID = instruction[7].split(',')
+    global annotations_all
+    annotations_all = {}
+    resultant_df = generate_variant_notarget_summary(
+        path=paths[0],
+        impactlvl=impactlvl,
+        FileID=FileID[0],
+        pipelineID=pipelineID[0],
+        sampleID=sampleID[0],
+        platform=platform[0],
+        aligner=aligner[0],
+        caller=caller[0])
+    for i in range(len(paths) - 1):
+        sample_df = generate_variant_notarget_summary(path=paths[i + 1],
+                                                      impactlvl=impactlvl,
+                                                      FileID=FileID[i + 1],
+                                                      pipelineID=pipelineID[i + 1],
+                                                      sampleID=sampleID[i + 1],
+                                                      platform=platform[i + 1],
+                                                      aligner=aligner[i + 1],
+                                                      caller=caller[i + 1])
+        resultant_df = resultant_df.append(sample_df, ignore_index=True)
+        resultant_df.to_csv('intermediate.csv', index=False)
+    resultant_df = resultant_df[['File_ID',
+                                 'Sample_ID',
+                                 'Pipeline_ID',
+                                 'Platform',
+                                 'Aligner',
+                                 'Caller',
+                                 'CHROM',
+                                 'POS',
+                                 'REF',
+                                 'ALT',
+                                 'GENE_NAME',
+                                 'IMPACT',
+                                 'EFFECT',
+                                 'LOF_PERC',
+                                 'GO_ID',
+                                 'GO_annotations',
+                                 'Variant_ID',
+                                 'Filename']]
+    additional_cols = {}
+    for f in FileID:
+        additional_cols['Present_in_' + f] = []
+    Is_unique_inpipe_col = []
+    Is_unique_acrosspipes_col = []
+    for row in resultant_df.itertuples():
+        var = row.Variant_ID
+        pipeline = row.Pipeline_ID
+        varsamples = list(np.unique(
+            list(resultant_df[resultant_df['Variant_ID'] == var]['File_ID'])))
+        var_pipeline_samples = list(np.unique(list(resultant_df[(
+            resultant_df.Variant_ID == var) & (resultant_df.Pipeline_ID == pipeline)]['Sample_ID'])))
+        var_real_samples = list(np.unique(
+            list(resultant_df[(resultant_df.Variant_ID == var)]['Sample_ID'])))
+        varsamples.sort()
+        var_pipeline_samples.sort()
+        var_real_samples.sort()
+        for col in additional_cols:
+            if col[11:] in varsamples:
+                additional_cols[col].append(1)
+            else:
+                additional_cols[col].append(0)
+        if len(var_pipeline_samples) <= 1:
+            Is_unique_inpipe_col.append(1)
+        else:
+            Is_unique_inpipe_col.append(0)
+        if len(var_real_samples) <= 1:
+            Is_unique_acrosspipes_col.append(1)
+        else:
+            Is_unique_acrosspipes_col.append(0)
+    for newcol in additional_cols:
+        resultant_df[newcol] = additional_cols[newcol]
+    resultant_df['Is_unique_forthesample_within_pipeline'] = Is_unique_inpipe_col
+    resultant_df['Is_unique_forthesample_acrosspipes'] = Is_unique_acrosspipes_col
+    resultant_df.reset_index(inplace=True, drop=True)
+    resultant_df.to_csv('_'.join(sampleID) + '.csv', index=False)
+    return resultant_df
+
+
+def generate_variant_notarget_summary(
+        path,
+        impactlvl,
+        FileID,
+        pipelineID,
+        sampleID,
+        platform,
+        aligner,
+        caller):
+    impact_levels = []
+    for i in impactlvl:
+        if i == 'b':
+            impact_levels.append('MODIFIER')
+        elif i == 'l':
+            impact_levels.append('LOW')
+        elif i == 'm':
+            impact_levels.append('MODERATE')
+        elif i == 'h':
+            impact_levels.append('HIGH')
+    print('impact levels: ', ', '.join(impact_levels))
+    data = read_impact_data(path)
+    data_subset = subset_byimpact(data, impact_levels)
+    data_subset_with_target_genes = add_genenames(
+        data_subset)  # in this case all genes are target
+    print('file: ', path)
+    data_subset_with_target_genes['Pipeline_ID'] = [
+        pipelineID for i in range(len(data_subset_with_target_genes['GENE_NAME']))]
+    data_subset_with_target_genes['File_ID'] = [
+        FileID for i in range(len(data_subset_with_target_genes['GENE_NAME']))]
+    data_subset_with_target_genes['Sample_ID'] = [
+        sampleID for i in range(len(data_subset_with_target_genes['GENE_NAME']))]
+    data_subset_with_target_genes['Platform'] = [
+        platform for i in range(len(data_subset_with_target_genes['GENE_NAME']))]
+    data_subset_with_target_genes['Aligner'] = [
+        aligner for i in range(len(data_subset_with_target_genes['GENE_NAME']))]
+    data_subset_with_target_genes['Caller'] = [
+        caller for i in range(len(data_subset_with_target_genes['GENE_NAME']))]
+    data_subset_with_target_genes['Filename'] = [
+        path for i in range(len(data_subset_with_target_genes['GENE_NAME']))]
+    genes = list(data_subset_with_target_genes['GENE_NAME'])
+    annotations = get_go_annotations(genes)
+    annotations_summary_df = generate_annotation_summary(annotations)
+    annotations_summary_df_grouped_bygenes = annotations_summary_df.groupby(
+        'GENE_NAME')
+    annotations_col = []
+    GO_ID_col = []
+    for i in data_subset_with_target_genes['GENE_NAME']:
+        if i in list(annotations_summary_df['GENE_NAME']):
+            annotations_col.append(
+                (list(
+                    np.unique(
+                        list(
+                            annotations_summary_df_grouped_bygenes.get_group(i)['GO_TERM'])))))
+            GO_ID_col.append(
+                (list(
+                    np.unique(
+                        list(
+                            annotations_summary_df_grouped_bygenes.get_group(i)['GO_ID'])))))
+        else:
+            annotations_col.append('NA')
+            GO_ID_col.append('NA')
+    data_subset_with_target_genes['GO_ID'] = GO_ID_col
+    data_subset_with_target_genes['GO_ID']
+    data_subset_with_target_genes['GO_annotations'] = annotations_col
+    variant_ID = []
+    for index, row in data_subset_with_target_genes.iterrows():
+        variant_ID.append(str(row['CHROM']) +
+                          str(row['POS']) + str(row['ALT']))
+    data_subset_with_target_genes['Variant_ID'] = variant_ID
+    return data_subset_with_target_genes
+
+
+# CONTINUING GENERAL REPORT
+def continue_summary():
+    instruction = input(
+        'input format: paths, impacts (-a, -b, -l, -m, -h, -lm etc.), FileIDs, sampleIDs, seq_platforms, aligners, callers, pipelineIDs, current_result.csv: ')
+    instruction = instruction.split(' ')
+    paths = instruction[0].split(',')
+    impactlvl = instruction[1]
+    FileID = instruction[2].split(',')
+    sampleID = instruction[3].split(',')
+    platform = instruction[4].split(',')
+    aligner = instruction[5].split(',')
+    caller = instruction[6].split(',')
+    pipelineID = instruction[7].split(',')
+    current_res = instruction[8]
+    resultant_df = pd.read_csv(current_res, sep=',')
+    global annotations_all
+    annotations_all = {}
+    for i in range(len(paths)):
+        sample_df = generate_variant_notarget_summary(
+            path=paths[i],
+            impactlvl=impactlvl,
+            FileID=FileID[i],
+            pipelineID=pipelineID[i],
+            sampleID=sampleID[i],
+            platform=platform[i],
+            aligner=aligner[i],
+            caller=caller[i])
+        resultant_df = resultant_df.append(sample_df, ignore_index=True)
+        resultant_df.to_csv('intermediate_coontinue.csv', index=False)
+    resultant_df = resultant_df[['File_ID',
+                                 'Sample_ID',
+                                 'Pipeline_ID',
+                                 'Platform',
+                                 'Aligner',
+                                 'Caller',
+                                 'CHROM',
+                                 'POS',
+                                 'REF',
+                                 'ALT',
+                                 'GENE_NAME',
+                                 'IMPACT',
+                                 'EFFECT',
+                                 'LOF_PERC',
+                                 'GO_ID',
+                                 'GO_annotations',
+                                 'Variant_ID',
+                                 'Filename']]
+    additional_cols = {}
+    for f in FileID:
+        additional_cols['Present_in_' + f] = []
+    Is_unique_inpipe_col = []
+    Is_unique_acrosspipes_col = []
+    for row in resultant_df.itertuples():
+        var = row.Variant_ID
+        pipeline = row.Pipeline_ID
+        varsamples = list(np.unique(
+            list(resultant_df[resultant_df['Variant_ID'] == var]['File_ID'])))
+        var_pipeline_samples = list(np.unique(list(resultant_df[(
+            resultant_df.Variant_ID == var) & (resultant_df.Pipeline_ID == pipeline)]['Sample_ID'])))
+        var_real_samples = list(np.unique(
+            list(resultant_df[(resultant_df.Variant_ID == var)]['Sample_ID'])))
+        varsamples.sort()
+        var_pipeline_samples.sort()
+        var_real_samples.sort()
+        for col in additional_cols:
+            if col[11:] in varsamples:
+                additional_cols[col].append(1)
+            else:
+                additional_cols[col].append(0)
+        if len(var_pipeline_samples) <= 1:
+            Is_unique_inpipe_col.append(1)
+        else:
+            Is_unique_inpipe_col.append(0)
+        if len(var_real_samples) <= 1:
+            Is_unique_acrosspipes_col.append(1)
+        else:
+            Is_unique_acrosspipes_col.append(0)
+    for newcol in additional_cols:
+        resultant_df[newcol] = additional_cols[newcol]
+    resultant_df['Is_unique_forthesample_within_pipeline'] = Is_unique_inpipe_col
+    resultant_df['Is_unique_forthesample_acrosspipes'] = Is_unique_acrosspipes_col
+    resultant_df.reset_index(inplace=True, drop=True)
+    resultant_df.to_csv('_'.join(sampleID) + '.csv', index=False)
+    return resultant_df
+
+
 # GENERAL INIT
 def general_launch():
     instruction = input(
-        'input mode: get_go_annotation or geneset_job or get_coords or generate_SV_files or drop_dupl or get_common_genes or total_variant_summary: ')
+        'input mode: get_go_annotation or geneset_job or get_coords or generate_SV_files or drop_dupl or get_common_genes or total_variant_summary_fortargets or total_variant_summary_notargets or continue_summary: ')
     instruction = instruction.split(' ')
     if instruction[0] == 'get_go_annotation':
         get_go_annotations_init()
@@ -1016,8 +1290,12 @@ def general_launch():
         drop_duplicates_init()
     elif instruction[0] == 'get_common_genes':
         get_common_genes_init()
-    elif instruction[0] == 'total_variant_summary':
+    elif instruction[0] == 'total_variant_summary_fortargets':
         total_variant_summary_init()
+    elif instruction[0] == 'total_variant_summary_notargets':
+        total_variant_summary_notarget_init()
+    elif insruction[0] == 'continue_summary':
+        continue_summary()
 
 
 general_launch()
